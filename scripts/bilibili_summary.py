@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
 import requests
@@ -404,11 +405,17 @@ def main():
                 if file_size_mb > 7:
                     print(f"# Audio {file_size_mb:.1f}MB, splitting into chunks...", file=sys.stderr)
                     chunks = split_audio(audio_path, tmpdir)
-                    texts = []
-                    for i, chunk_path in enumerate(chunks):
-                        print(f"# Transcribing chunk {i+1}/{len(chunks)}...", file=sys.stderr)
-                        chunk_text = transcribe_with_mimo_asr(chunk_path)
-                        texts.append(chunk_text)
+                    print(f"# Transcribing {len(chunks)} chunks in parallel...", file=sys.stderr)
+                    texts = [None] * len(chunks)
+                    with ThreadPoolExecutor(max_workers=min(len(chunks), 4)) as pool:
+                        futures = {
+                            pool.submit(transcribe_with_mimo_asr, chunk_path): i
+                            for i, chunk_path in enumerate(chunks)
+                        }
+                        for future in as_completed(futures):
+                            idx = futures[future]
+                            texts[idx] = future.result()
+                            print(f"# Chunk {idx+1}/{len(chunks)} done", file=sys.stderr)
                     text = "\n".join(texts)
                 else:
                     print(f"# Transcribing with MiMo-V2.5-ASR...", file=sys.stderr)
